@@ -60,7 +60,6 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
     console.log("Salt positions (1-indexed, first 5):", mapping.slice(0, 5));
     console.log("Salt positions (0-indexed, first 5 after sort desc):", removeIdx.slice(0, 5));
 
-    // Show what characters we're actually removing
     const charsToRemove = removeIdx.slice(0, 10).map((idx) => ({
         pos: idx,
         char: encrypted[idx] || "OUT_OF_BOUNDS",
@@ -75,8 +74,6 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
     }
 
     console.log("After removal length:", base64Str.length);
-
-    // Show a sample of what we have after salt removal
     console.log("After salt removal (first 100 chars):", base64Str.substring(0, 100));
     console.log("After salt removal (last 50 chars):", base64Str.substring(base64Str.length - 50));
 
@@ -84,8 +81,6 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
 
     // CRITICAL: Replace spaces with + (form encoding converts + to space)
     base64Str = base64Str.replace(/ /g, "+");
-
-    // Clean any remaining invalid characters
     base64Str = base64Str.replace(/[^A-Za-z0-9+/=]/g, "");
 
     if (beforeClean !== base64Str) {
@@ -100,8 +95,8 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
                 });
             }
         }
-        console.log("⚠️ Cleaned", invalidChars.length, "invalid chars:", invalidChars);
-        console.log("⚠️ Invalid char positions (first 10):", invalidPositions.slice(0, 10));
+        console.log("Cleaned", invalidChars.length, "invalid chars:", invalidChars);
+        console.log("Invalid char positions (first 10):", invalidPositions.slice(0, 10));
     }
 
     const paddingNeeded = (4 - (base64Str.length % 4)) % 4;
@@ -110,7 +105,7 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
         base64Str += "=".repeat(paddingNeeded);
     }
 
-    console.log("✅ Final base64 ready, length:", base64Str.length);
+    console.log("Final base64 ready, length:", base64Str.length);
     console.log("Final base64 (first 100):", base64Str.substring(0, 100));
     console.log("Final base64 (last 50):", base64Str.substring(base64Str.length - 50));
 
@@ -119,11 +114,10 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
     try {
         buf = Uint8Array.from(atob(base64Str), (c) => c.charCodeAt(0));
     } catch (atobError) {
-        console.log("⚠️ atob failed:", atobError.message);
+        console.log("atob failed:", atobError.message);
         console.log("Base64 length:", base64Str.length, "mod 4:", base64Str.length % 4);
-
-        // Try to find where the base64 is invalid
         console.log("Testing base64 validity in chunks...");
+        
         for (let i = 0; i < Math.min(5, Math.floor(base64Str.length / 100)); i++) {
             const chunk = base64Str.substring(i * 100, (i + 1) * 100);
             try {
