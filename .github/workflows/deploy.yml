@@ -3,25 +3,40 @@ name: Deploy
 on:
     push:
         branches: [main]
+    workflow_dispatch:
 
 permissions:
-    contents: write
+    contents: read
+    pages: write
+    id-token: write
+
+concurrency:
+    group: "pages"
+    cancel-in-progress: false
 
 jobs:
     deploy:
         runs-on: ubuntu-latest
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
         steps:
             - uses: actions/checkout@v4
 
             - name: Version assets
               run: |
                   COMMIT_HASH="${GITHUB_SHA::7}"
-                  sed -i "s/app\.js\"/app.js?v=$COMMIT_HASH\"/g" index.html
-                  sed -i "s/styles\.css\"/styles.css?v=$COMMIT_HASH\"/g" index.html
+                  sed "s/<%VERSION%>/$COMMIT_HASH/g" index.html > index.tmp.html
+                  mv index.tmp.html index.html
 
-            - name: Commit and push if changed
-              run: |
-                  git config --local user.email "github-actions[bot]@users.noreply.github.com"
-                  git config --local user.name "github-actions[bot]"
-                  git add index.html
-                  git diff --quiet && git diff --staged --quiet || (git commit -m "Update asset versions [skip ci]" && git push)
+            - name: Setup Pages
+              uses: actions/configure-pages@v4
+
+            - name: Upload artifact
+              uses: actions/upload-pages-artifact@v3
+              with:
+                  path: "."
+
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@v4
