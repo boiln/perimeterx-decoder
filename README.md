@@ -2,11 +2,9 @@
 
 Decrypt and verify PerimeterX request/response payloads.
 
-## Demo
+**Live Demo:** https://boiln.github.io/perimeterx-decoder/
 
 https://github.com/user-attachments/assets/229f2d5e-d281-460b-b1c4-1b0896badaa3
-
-**Live:** https://boiln.github.io/perimeterx-decoder/
 
 ## Features
 
@@ -33,3 +31,11 @@ const result = decrypt(encryptedPayload, uuid);
 // Response payload
 const { decrypted, key } = decryptOb(obField);
 ```
+
+## License
+
+MIT
+
+---
+
+**Disclaimer:** For educational and security research purposes only.
