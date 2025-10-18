@@ -8,7 +8,7 @@ https://github.com/user-attachments/assets/229f2d5e-d281-460b-b1c4-1b0896badaa3
 
 ## Features
 
--   Request payload decryption (UUID-based XOR + salt interleaving)
+-   Request payload decryption (UUID-based XOR encryption)
 -   Response payload decryption (OB field XOR)
 -   PC signature verification
 -   Client-side processing (no data leaves your browser)
