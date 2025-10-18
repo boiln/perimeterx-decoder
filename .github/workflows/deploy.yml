@@ -1,0 +1,27 @@
+name: Deploy
+
+on:
+    push:
+        branches: [main]
+
+permissions:
+    contents: write
+
+jobs:
+    deploy:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Version assets
+              run: |
+                  COMMIT_HASH="${GITHUB_SHA::7}"
+                  sed -i "s/app\.js\"/app.js?v=$COMMIT_HASH\"/g" index.html
+                  sed -i "s/styles\.css\"/styles.css?v=$COMMIT_HASH\"/g" index.html
+
+            - name: Commit and push if changed
+              run: |
+                  git config --local user.email "github-actions[bot]@users.noreply.github.com"
+                  git config --local user.name "github-actions[bot]"
+                  git add index.html
+                  git diff --quiet && git diff --staged --quiet || (git commit -m "Update asset versions [skip ci]" && git push)
