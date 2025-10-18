@@ -1,10 +1,17 @@
 // ====================================================================
 // RESPONSE PAYLOAD DECRYPTION (OB field - XOR-based)
 // ====================================================================
-// Decrypts 'ob' fields in PerimeterX responses (e.g., CAPTCHA responses)
-// Encryption: XOR with key (1-255) → base64
-// Auto-detects XOR key by brute force (looks for "o~~~~" pattern)
-// No UUID required - standalone decryption
+// Decrypts 'ob' fields in PerimeterX responses
+//
+// 1. Validate base64 format
+// 2. Add padding if needed to make length divisible by 4
+// 3. Base64 decode to get XOR'd bytes
+// 4. XOR every byte with the key to recover original plaintext
+//
+// No UUID Required: Unlike request decryption, this is standalone
+// The XOR key is much simpler and can be brute-forced quickly
+//
+// Returns: {decrypted: string, key: number} or null if decryption fails
 // ====================================================================
 
 export function decryptOb(rawOb, key = null) {
@@ -43,17 +50,6 @@ export function decryptOb(rawOb, key = null) {
             ) {
                 return { decrypted, key: k };
             }
-        }
-
-        const decrypted0 = Array.from(raw)
-            .map((b) => String.fromCharCode(b ^ 0))
-            .join("");
-        if (
-            decrypted0.startsWith("o") &&
-            decrypted0.includes("~~~~") &&
-            decrypted0.split("").every((c) => c.charCodeAt(0) >= 32 && c.charCodeAt(0) < 127)
-        ) {
-            return { decrypted: decrypted0, key: 0 };
         }
 
         return null;

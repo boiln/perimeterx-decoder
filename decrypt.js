@@ -2,8 +2,27 @@
 // REQUEST PAYLOAD DECRYPTION (UUID-based encryption)
 // ====================================================================
 // Decrypts encrypted request payloads sent to PerimeterX servers
-// Encryption: XOR(50) → percent-encode → base64 → salt interleaving
-// Requires: UUID for salt removal
+//
+// Encryption Algorithm:
+// 1. Start with JSON payload
+// 2. XOR every byte with key 50
+// 3. Percent-encode the result (URL encoding)
+// 4. Base64 encode the percent-encoded string
+// 5. Interleave salt characters at UUID-derived positions
+//
+// 1. Remove salt characters using UUID-based position mapping
+//    - UUID is base64-encoded and XOR'd with key 10
+//    - Positions are computed via character code multiplication
+//    - Produces deterministic removal indices
+// 2. Clean and pad the base64 string
+//    - Replace spaces with + (form encoding artifact)
+//    - Remove invalid base64 characters
+//    - Add padding if needed
+// 3. Base64 decode to get percent-encoded bytes
+// 4. Percent-decode (URL decode) to get XOR'd JSON
+// 5. XOR every byte with key 50 to recover original JSON
+//
+// Returns: Decrypted JSON object
 // ====================================================================
 
 function jt(str, key) {
@@ -53,85 +72,29 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
     let base64Str = encrypted;
     const removeIdx = mapping.map((x) => x - 1).sort((a, b) => b - a);
 
-    console.log("Decrypt Debug:");
-    console.log("Original length:", encrypted.length);
-    console.log("Expected base64 length after removal:", origLen);
-    console.log("Number of chars to remove:", removeIdx.length);
-    console.log("Salt positions (1-indexed, first 5):", mapping.slice(0, 5));
-    console.log("Salt positions (0-indexed, first 5 after sort desc):", removeIdx.slice(0, 5));
-
-    const charsToRemove = removeIdx.slice(0, 10).map((idx) => ({
-        pos: idx,
-        char: encrypted[idx] || "OUT_OF_BOUNDS",
-        code: encrypted.charCodeAt(idx) || -1,
-    }));
-    console.log("Characters at removal positions (first 10):", charsToRemove);
-
     for (const idx of removeIdx) {
         if (idx >= 0 && idx < base64Str.length) {
             base64Str = base64Str.slice(0, idx) + base64Str.slice(idx + 1);
         }
     }
 
-    console.log("After removal length:", base64Str.length);
-    console.log("After salt removal (first 100 chars):", base64Str.substring(0, 100));
-    console.log("After salt removal (last 50 chars):", base64Str.substring(base64Str.length - 50));
-
-    const beforeClean = base64Str;
-
     // CRITICAL: Replace spaces with + (form encoding converts + to space)
     base64Str = base64Str.replace(/ /g, "+");
     base64Str = base64Str.replace(/[^A-Za-z0-9+/=]/g, "");
 
-    if (beforeClean !== base64Str) {
-        const invalidChars = beforeClean.match(/[^A-Za-z0-9+/=]/g);
-        const invalidPositions = [];
-        for (let i = 0; i < beforeClean.length; i++) {
-            if (!/[A-Za-z0-9+/=]/.test(beforeClean[i])) {
-                invalidPositions.push({
-                    pos: i,
-                    char: beforeClean[i],
-                    code: beforeClean.charCodeAt(i),
-                });
-            }
-        }
-        console.log("Cleaned", invalidChars.length, "invalid chars:", invalidChars);
-        console.log("Invalid char positions (first 10):", invalidPositions.slice(0, 10));
-    }
-
     const paddingNeeded = (4 - (base64Str.length % 4)) % 4;
     if (paddingNeeded > 0) {
-        console.log(`Adding ${paddingNeeded} padding char(s)`);
         base64Str += "=".repeat(paddingNeeded);
     }
-
-    console.log("Final base64 ready, length:", base64Str.length);
-    console.log("Final base64 (first 100):", base64Str.substring(0, 100));
-    console.log("Final base64 (last 50):", base64Str.substring(base64Str.length - 50));
 
     let buf;
     let decodeFailed = false;
     try {
         buf = Uint8Array.from(atob(base64Str), (c) => c.charCodeAt(0));
     } catch (atobError) {
-        console.log("atob failed:", atobError.message);
-        console.log("Base64 length:", base64Str.length, "mod 4:", base64Str.length % 4);
-        console.log("Testing base64 validity in chunks...");
-        
-        for (let i = 0; i < Math.min(5, Math.floor(base64Str.length / 100)); i++) {
-            const chunk = base64Str.substring(i * 100, (i + 1) * 100);
-            try {
-                atob(chunk.padEnd(Math.ceil(chunk.length / 4) * 4, "="));
-                console.log(`✓ Chunk ${i} (${i * 100}-${(i + 1) * 100}) is valid`);
-            } catch (e) {
-                console.log(`✗ Chunk ${i} (${i * 100}-${(i + 1) * 100}) is INVALID:`, chunk);
-            }
-        }
-
         decodeFailed = true;
 
         if (allowPartial) {
-            console.log("Attempting byte-by-byte decode...");
             const bytes = [];
             for (let i = 0; i < base64Str.length; i += 4) {
                 const chunk = base64Str.substring(i, Math.min(i + 4, base64Str.length));
@@ -145,7 +108,6 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
                 }
             }
             buf = new Uint8Array(bytes);
-            console.log(`Decoded ${bytes.length} bytes from partial decode`);
         } else {
             throw atobError;
         }
@@ -187,7 +149,6 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
         try {
             return JSON.parse(jsonStr);
         } catch (e) {
-            console.log("JSON parse failed, returning raw decrypted string");
             return {
                 _rawDecrypted: jsonStr,
                 _parseError: e.message,
