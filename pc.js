@@ -40,7 +40,10 @@ function customJsonStringify(payload) {
 
     function W(t) {
         const e = G[t];
-        return e || "\\u" + ("0000" + t.charCodeAt(0).toString(16)).slice(-4);
+        if (e) {
+            return e;
+        }
+        return "\\u" + ("0000" + t.charCodeAt(0).toString(16)).slice(-4);
     }
 
     const F =

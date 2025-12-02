@@ -26,17 +26,371 @@ const pasteBtn = document.getElementById("pasteBtn");
 
 let processingTimeout;
 
-// Helper function to parse form parameters
+// ====================================================================
+// HELPER FUNCTIONS
+// ====================================================================
+
 function parseFormParams(input) {
     const params = new URLSearchParams(input);
     const result = {};
     for (const [key, value] of params.entries()) {
         result[key] = value;
     }
-    return Object.keys(result).length > 0 ? result : null;
+    if (Object.keys(result).length === 0) {
+        return null;
+    }
+    return result;
 }
 
-// Main Payload Processing Function
+function looksLikeEncrypted(input) {
+    const base64Chars = input.replace(/[^A-Za-z0-9+/=]/g, "").length;
+    const totalChars = input.length;
+    return base64Chars / totalChars > 0.9 && input.length > 50;
+}
+
+function resetUI() {
+    outputPayload.value = "";
+    pcValue.textContent = "----------------";
+    digestValue.textContent = "--";
+    pcText.style.display = "none";
+    digestText.style.display = "none";
+    statusText.textContent = "Ready";
+    statusIndicator.className = "status-indicator";
+    errorBanner.style.display = "none";
+}
+
+function showError(error) {
+    statusText.textContent = "Error";
+    statusIndicator.className = "status-indicator error";
+    errorMessage.textContent = error.message;
+    errorBanner.style.display = "flex";
+    outputPayload.value = "";
+    pcValue.textContent = "----------------";
+    digestValue.textContent = "--";
+    pcText.style.display = "none";
+    digestText.style.display = "none";
+}
+
+function setStatus(text, type) {
+    statusText.textContent = text;
+    statusIndicator.className = `status-indicator ${type}`;
+}
+
+function hidePcDisplay() {
+    pcText.style.display = "none";
+    digestText.style.display = "none";
+}
+
+function showPcDisplay() {
+    pcText.style.display = "flex";
+    digestText.style.display = "flex";
+}
+
+// ====================================================================
+// DECRYPTION LOGIC
+// ====================================================================
+
+function tryObDecryption(input) {
+    const result = decryptOb(input);
+    if (!result) {
+        return null;
+    }
+    return {
+        _type: "ob_decrypted",
+        decrypted: result.decrypted,
+        key: result.key,
+    };
+}
+
+function tryUuidDecryption(input, uuid, originalInput) {
+    try {
+        return decrypt(input, uuid);
+    } catch (e) {
+        try {
+            return JSON.parse(originalInput);
+        } catch (jsonError) {
+            const errorDetails = e.message.includes("atob")
+                ? `Base64 decode failed. The encrypted payload may be corrupted or invalid. Original error: ${e.message}`
+                : `Decryption failed: ${e.message}`;
+            throw new Error(errorDetails);
+        }
+    }
+}
+
+function tryAutoDetectUuid(input) {
+    const uuidPattern = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+    const dummyUuid = "00000000-0000-0000-0000-000000000000";
+
+    try {
+        const partialDecrypt = decrypt(input, dummyUuid);
+        const partialJson = JSON.stringify(partialDecrypt);
+        const potentialUuids = [...new Set(partialJson.match(uuidPattern) || [])];
+
+        for (const candidateUuid of potentialUuids) {
+            try {
+                const testDecrypt = decrypt(input, candidateUuid);
+                const testJson = JSON.stringify(testDecrypt);
+                const hasInvalidChars = /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/.test(testJson);
+
+                if (testJson.length > 0 && !hasInvalidChars) {
+                    testDecrypt._autoDetectedUuid = candidateUuid;
+                    return testDecrypt;
+                }
+            } catch (e) {
+                continue;
+            }
+        }
+    } catch (e) {
+        // Partial decryption failed
+    }
+
+    return null;
+}
+
+function tryPartialDecryption(input) {
+    const dummyUuid = "00000000-0000-0000-0000-000000000000";
+
+    try {
+        const result = decrypt(input, dummyUuid, true);
+        result._partialDecryption = true;
+        return result;
+    } catch (e) {
+        console.error("Partial decryption error:", e);
+        return {
+            _type: "needs_uuid",
+            message: "This appears to be an encrypted request payload. Please provide a UUID to decrypt it.",
+            encrypted: input,
+        };
+    }
+}
+
+function decryptPayload(input, uuid, originalInput) {
+    // Try OB decryption first
+    const obResult = tryObDecryption(input);
+    if (obResult) {
+        console.log("ob decryption result: success");
+        return obResult;
+    }
+    console.log("ob decryption result: failed");
+
+    // If we have a UUID, use it
+    if (uuid) {
+        return tryUuidDecryption(input, uuid, originalInput);
+    }
+
+    // No UUID - check if it looks encrypted
+    console.log("No UUID, checking if looks encrypted...");
+    if (!looksLikeEncrypted(input)) {
+        console.log("Looks encrypted: false");
+        try {
+            return JSON.parse(originalInput);
+        } catch (jsonError) {
+            throw new Error("Unable to process input. Please provide UUID for encrypted payloads or valid JSON.");
+        }
+    }
+
+    console.log("Looks encrypted: true");
+
+    // Try auto-detecting UUID
+    const autoDetected = tryAutoDetectUuid(input);
+    if (autoDetected) {
+        uuidInput.value = autoDetected._autoDetectedUuid;
+        return autoDetected;
+    }
+
+    // Fall back to partial decryption
+    return tryPartialDecryption(input);
+}
+
+// ====================================================================
+// OUTPUT DISPLAY
+// ====================================================================
+
+function formatOutput(payload) {
+    if (payload._type === "ob_decrypted") {
+        return `Decrypted 'ob' (XOR key: ${payload.key}):\n\n${payload.decrypted}`;
+    }
+
+    if (payload._type === "needs_uuid") {
+        const preview = payload.encrypted.substring(0, 200);
+        const suffix = payload.encrypted.length > 200 ? " .." : "";
+        return `⚠️ ${payload.message}\n\nEncrypted payload preview:\n${preview}${suffix}`;
+    }
+
+    if (payload._rawDecrypted) {
+        return payload._rawDecrypted;
+    }
+
+    if (payload._partialDecryption) {
+        const displayPayload = { ...payload };
+        delete displayPayload._partialDecryption;
+        return `⚠️ Partial Decryption (No UUID provided - showing raw/malformed output):\n\n${JSON.stringify(displayPayload, null, 4)}`;
+    }
+
+    return JSON.stringify(payload, null, 4);
+}
+
+function updateStatusFromPayload(payload) {
+    if (payload._autoDetectedUuid) {
+        setStatus(`Auto-detected UUID: ${payload._autoDetectedUuid.substring(0, 18)}...`, "success");
+        return;
+    }
+
+    if (payload._rawDecrypted) {
+        setStatus("Partial Decryption (No UUID)", "warning");
+        return;
+    }
+
+    if (payload._partialDecryption) {
+        setStatus("Partial Decryption (UUID required)", "warning");
+        return;
+    }
+
+    if (payload._type === "needs_uuid") {
+        setStatus("UUID Required", "warning");
+        return;
+    }
+
+    if (payload._type === "ob_decrypted") {
+        setStatus("OB Decrypted", "success");
+        return;
+    }
+
+    setStatus("Decryption Successful", "success");
+}
+
+// ====================================================================
+// PC COMPUTATION
+// ====================================================================
+
+function extractTagAndFt(payload, formParams) {
+    let tag = "LxMdUmFkHTk8";
+    let ft = "362";
+
+    if (formParams?.tag) {
+        tag = formParams.tag;
+        console.log("Using tag from form params:", tag);
+    }
+    if (formParams?.ft) {
+        ft = String(formParams.ft);
+        console.log("Using ft from form params:", ft);
+    }
+
+    const source = Array.isArray(payload) && payload.length > 0 ? payload[0] : payload;
+
+    if (source && typeof source === "object") {
+        if (source.tag) {
+            tag = source.tag;
+            console.log("Extracted tag from payload.tag:", tag);
+        }
+        if (source.ft) {
+            ft = String(source.ft);
+            console.log("Extracted ft from payload:", ft);
+        }
+    }
+
+    return { tag, ft };
+}
+
+function canComputePc(payload, uuid) {
+    if (!uuid) return false;
+    if (payload._type === "ob_decrypted") return false;
+    if (payload._type === "needs_uuid") return false;
+    if (payload._rawDecrypted) return false;
+    if (payload._partialDecryption) return false;
+    return true;
+}
+
+async function computeAndDisplayPc(payload, uuid, formParams) {
+    if (!canComputePc(payload, uuid)) {
+        updatePcDisplayForSpecialCases(payload, uuid);
+        return;
+    }
+
+    const { tag, ft } = extractTagAndFt(payload, formParams);
+    console.log("Using tag:", tag, "(from main.min.live.js constant gt)");
+
+    try {
+        console.log("Computing PC with extracted/default values...");
+        const { pc, digest } = await recomputePc(payload, uuid, tag, ft);
+        pcValue.textContent = pc;
+        digestValue.textContent = digest;
+        showPcDisplay();
+        statusIndicator.className = "status-indicator success";
+    } catch (pcError) {
+        console.error("PC computation error:", pcError);
+        pcValue.textContent = "(Error)";
+        digestValue.textContent = "(Error)";
+        showPcDisplay();
+    }
+}
+
+function updatePcDisplayForSpecialCases(payload, uuid) {
+    if (payload._type === "ob_decrypted") {
+        pcValue.textContent = "----------------";
+        digestValue.textContent = "--";
+        hidePcDisplay();
+        return;
+    }
+
+    if (payload._type === "needs_uuid" || !uuid) {
+        pcValue.textContent = "(UUID required)";
+        digestValue.textContent = "(UUID required)";
+        hidePcDisplay();
+    }
+}
+
+// ====================================================================
+// INPUT PROCESSING
+// ====================================================================
+
+function processFormParams(input, currentUuid) {
+    if (!input.includes("payload=") || !input.includes("&")) {
+        return { formParams: null, uuid: currentUuid, inputToDecrypt: input };
+    }
+
+    const formParams = parseFormParams(input);
+    if (!formParams) {
+        return { formParams: null, uuid: currentUuid, inputToDecrypt: input };
+    }
+
+    console.log("Detected form parameters:", Object.keys(formParams));
+
+    let uuid = currentUuid;
+    if (formParams.uuid && !uuid) {
+        uuid = formParams.uuid;
+        uuidInput.value = uuid;
+        console.log("Auto-filled UUID from form params:", uuid);
+    }
+
+    if (formParams.payload) {
+        inputPayload.value = formParams.payload;
+        console.log("Replaced input with payload parameter");
+    }
+
+    return {
+        formParams,
+        uuid,
+        inputToDecrypt: formParams.payload || input,
+    };
+}
+
+function extractObFromJson(input, fallback) {
+    try {
+        const parsed = JSON.parse(input);
+        if (parsed.ob && typeof parsed.ob === "string") {
+            return parsed.ob;
+        }
+    } catch (e) {
+        // Not JSON
+    }
+    return fallback;
+}
+
+// ====================================================================
+// MAIN PROCESSING
+// ====================================================================
+
 async function processPayload() {
     clearTimeout(processingTimeout);
     processingTimeout = setTimeout(async () => {
@@ -45,356 +399,81 @@ async function processPayload() {
             let uuid = uuidInput.value.trim();
 
             if (!input) {
-                outputPayload.value = "";
-                pcValue.textContent = "----------------";
-                digestValue.textContent = "--";
-                pcText.style.display = "none";
-                digestText.style.display = "none";
-                statusText.textContent = "Ready";
-                statusIndicator.className = "status-indicator";
-                errorBanner.style.display = "none";
+                resetUI();
                 return;
             }
 
-            statusText.textContent = "Processing...";
-            statusIndicator.className = "status-indicator";
+            setStatus("Processing...", "");
             errorBanner.style.display = "none";
 
-            // Check if input is form-encoded parameters
-            let formParams = null;
-            if (input.includes("payload=") && input.includes("&")) {
-                formParams = parseFormParams(input);
-                console.log("Detected form parameters:", Object.keys(formParams));
+            const { formParams, uuid: updatedUuid, inputToDecrypt: baseInput } = processFormParams(input, uuid);
+            uuid = updatedUuid;
 
-                // Auto-fill UUID from form params if not already set
-                if (formParams.uuid && !uuid) {
-                    uuid = formParams.uuid;
-                    uuidInput.value = uuid;
-                    console.log("Auto-filled UUID from form params:", uuid);
-                }
-
-                // Replace input with just the payload value
-                if (formParams.payload) {
-                    inputPayload.value = formParams.payload;
-                    console.log("Replaced input with payload parameter");
-                }
-            }
+            const inputToDecrypt = extractObFromJson(input, baseInput);
 
             console.log("Starting payload processing ..");
             console.log("Input:", input.substring(0, 100) + " ..");
             console.log("UUID:", uuid || "(none)");
 
-            let decryptedPayload;
-            let decryptionAttempted = false;
-            let inputToDecrypt = formParams ? formParams.payload : input;
+            const decryptedPayload = decryptPayload(inputToDecrypt, uuid, input);
 
-            try {
-                const parsedInput = JSON.parse(input);
-                if (parsedInput.ob && typeof parsedInput.ob === "string") {
-                    inputToDecrypt = parsedInput.ob;
-                }
-            } catch (e) {
-                // Not JSON, use input as-is
-            }
-
-            const obResult = decryptOb(inputToDecrypt);
-            console.log("ob decryption result:", obResult ? "success" : "failed");
-            if (obResult) {
-                decryptionAttempted = true;
-                decryptedPayload = {
-                    _type: "ob_decrypted",
-                    decrypted: obResult.decrypted,
-                    key: obResult.key,
-                };
-            } else {
-                if (uuid) {
-                    try {
-                        decryptedPayload = decrypt(inputToDecrypt, uuid);
-                        decryptionAttempted = true;
-                    } catch (e) {
-                        try {
-                            decryptedPayload = JSON.parse(input);
-                        } catch (jsonError) {
-                            const errorDetails = e.message.includes("atob")
-                                ? `Base64 decode failed. The encrypted payload may be corrupted or invalid. Original error: ${e.message}`
-                                : `Decryption failed: ${e.message}`;
-                            throw new Error(errorDetails);
-                        }
-                    }
-                } else {
-                    console.log("No UUID, checking if looks encrypted...");
-                    const base64Chars = inputToDecrypt.replace(/[^A-Za-z0-9+/=]/g, "").length;
-                    const totalChars = inputToDecrypt.length;
-                    const looksEncrypted =
-                        base64Chars / totalChars > 0.9 && inputToDecrypt.length > 50;
-
-                    console.log(
-                        "Looks encrypted:",
-                        looksEncrypted,
-                        `(${base64Chars}/${totalChars} chars)`
-                    );
-
-                    if (looksEncrypted) {
-                        const uuidPattern =
-                            /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-                        let foundValidDecryption = false;
-
-                        const dummyUuid = "00000000-0000-0000-0000-000000000000";
-                        try {
-                            const partialDecrypt = decrypt(inputToDecrypt, dummyUuid);
-                            const partialJson = JSON.stringify(partialDecrypt);
-
-                            const potentialUuids = [
-                                ...new Set(partialJson.match(uuidPattern) || []),
-                            ];
-
-                            for (const candidateUuid of potentialUuids) {
-                                try {
-                                    const testDecrypt = decrypt(inputToDecrypt, candidateUuid);
-                                    const testJson = JSON.stringify(testDecrypt);
-
-                                    const hasInvalidChars =
-                                        /[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F-\x9F\uFFFD]/.test(
-                                            testJson
-                                        );
-                                    const isValidJson = testJson.length > 0 && !hasInvalidChars;
-
-                                    if (isValidJson) {
-                                        decryptedPayload = testDecrypt;
-                                        foundValidDecryption = true;
-                                        decryptionAttempted = true;
-                                        uuidInput.value = candidateUuid;
-                                        decryptedPayload._autoDetectedUuid = candidateUuid;
-                                        break;
-                                    }
-                                } catch (e) {
-                                    continue;
-                                }
-                            }
-                        } catch (e) {
-                            // Partial decryption failed, continue
-                        }
-
-                        if (!foundValidDecryption) {
-                            try {
-                                decryptedPayload = decrypt(inputToDecrypt, dummyUuid, true);
-                                if (decryptedPayload._rawDecrypted) {
-                                    decryptedPayload._partialDecryption = true;
-                                    decryptionAttempted = true;
-                                } else {
-                                    decryptedPayload._partialDecryption = true;
-                                    decryptionAttempted = true;
-                                }
-                            } catch (partialError) {
-                                console.error("Partial decryption error:", partialError);
-                                decryptedPayload = {
-                                    _type: "needs_uuid",
-                                    message:
-                                        "This appears to be an encrypted request payload. Please provide a UUID to decrypt it.",
-                                    encrypted: inputToDecrypt,
-                                };
-                            }
-                        }
-                    } else {
-                        try {
-                            decryptedPayload = JSON.parse(input);
-                        } catch (jsonError) {
-                            throw new Error(
-                                "Unable to process input. Please provide UUID for encrypted payloads or valid JSON."
-                            );
-                        }
-                    }
-                }
-            }
-
-            console.log(
-                "Decryption complete. Result type:",
-                decryptedPayload._type || decryptedPayload._rawDecrypted
-                    ? "raw"
-                    : decryptedPayload._partialDecryption
-                    ? "partial"
-                    : "normal"
+            console.log("Decryption complete. Result type:",
+                decryptedPayload._type || decryptedPayload._rawDecrypted ? "raw" :
+                decryptedPayload._partialDecryption ? "partial" : "normal"
             );
 
-            if (decryptedPayload._type === "ob_decrypted") {
-                outputPayload.value = `Decrypted 'ob' (XOR key: ${decryptedPayload.key}):\n\n${decryptedPayload.decrypted}`;
-            } else if (decryptedPayload._type === "needs_uuid") {
-                outputPayload.value = `⚠️ ${
-                    decryptedPayload.message
-                }\n\nEncrypted payload preview:\n${decryptedPayload.encrypted.substring(0, 200)}${
-                    decryptedPayload.encrypted.length > 200 ? " .." : ""
-                }`;
-            } else if (decryptedPayload._rawDecrypted) {
-                outputPayload.value = decryptedPayload._rawDecrypted;
-            } else if (decryptedPayload._partialDecryption) {
-                const displayPayload = { ...decryptedPayload };
-                delete displayPayload._partialDecryption;
-                outputPayload.value = `⚠️ Partial Decryption (No UUID provided - showing raw/malformed output):\n\n${JSON.stringify(
-                    displayPayload,
-                    null,
-                    4
-                )}`;
-            } else {
-                outputPayload.value = JSON.stringify(decryptedPayload, null, 4);
-            }
+            outputPayload.value = formatOutput(decryptedPayload);
+            await computeAndDisplayPc(decryptedPayload, uuid, formParams);
+            updateStatusFromPayload(decryptedPayload);
 
-            // PC Computation Section
-            if (
-                uuid &&
-                decryptedPayload._type !== "ob_decrypted" &&
-                decryptedPayload._type !== "needs_uuid" &&
-                !decryptedPayload._rawDecrypted &&
-                !decryptedPayload._partialDecryption
-            ) {
-                let tag = "LxMdUmFkHTk8";
-                let ft = "362";
-
-                // Check form params first for tag and ft
-                if (formParams) {
-                    if (formParams.tag) {
-                        tag = formParams.tag;
-                        console.log("Using tag from form params:", tag);
-                    }
-                    if (formParams.ft) {
-                        ft = String(formParams.ft);
-                        console.log("Using ft from form params:", ft);
-                    }
-                }
-
-                // Then check payload content (can override form params)
-                if (Array.isArray(decryptedPayload) && decryptedPayload.length > 0) {
-                    const firstItem = decryptedPayload[0];
-                    if (firstItem && typeof firstItem === "object") {
-                        if (firstItem.tag) {
-                            tag = firstItem.tag;
-                            console.log("Extracted tag from payload.tag:", tag);
-                        }
-
-                        if (firstItem.ft) {
-                            ft = String(firstItem.ft);
-                            console.log("Extracted ft from payload:", ft);
-                        }
-                    }
-                } else if (typeof decryptedPayload === "object" && decryptedPayload !== null) {
-                    if (decryptedPayload.tag) {
-                        tag = decryptedPayload.tag;
-                        console.log("Extracted tag from payload.tag:", tag);
-                    }
-
-                    if (decryptedPayload.ft) {
-                        ft = String(decryptedPayload.ft);
-                        console.log("Extracted ft from payload:", ft);
-                    }
-                }
-
-                console.log("Using tag:", tag, "(from main.min.live.js constant gt)");
-
-                try {
-                    console.log("Computing PC with extracted/default values...");
-                    const { pc, digest } = await recomputePc(decryptedPayload, uuid, tag, ft);
-                    pcValue.textContent = pc;
-                    digestValue.textContent = digest;
-                    pcText.style.display = "flex";
-                    digestText.style.display = "flex";
-                    statusIndicator.className = "status-indicator success";
-                } catch (pcError) {
-                    console.error("PC computation error:", pcError);
-                    pcValue.textContent = "(Error)";
-                    digestValue.textContent = "(Error)";
-                    pcText.style.display = "flex";
-                    digestText.style.display = "flex";
-                }
-            } else if (decryptedPayload._type === "ob_decrypted") {
-                pcValue.textContent = "----------------";
-                digestValue.textContent = "--";
-                pcText.style.display = "none";
-                digestText.style.display = "none";
-            } else if (decryptedPayload._type === "needs_uuid") {
-                pcValue.textContent = "(UUID required)";
-                digestValue.textContent = "(UUID required)";
-                pcText.style.display = "none";
-                digestText.style.display = "none";
-            } else {
-                pcValue.textContent = "(UUID required)";
-                digestValue.textContent = "(UUID required)";
-                pcText.style.display = "none";
-                digestText.style.display = "none";
-            }
-
-            if (decryptedPayload._autoDetectedUuid) {
-                statusText.textContent = `Auto-detected UUID: ${decryptedPayload._autoDetectedUuid.substring(
-                    0,
-                    18
-                )}...`;
-                statusIndicator.className = "status-indicator success";
-            } else if (decryptedPayload._rawDecrypted) {
-                statusText.textContent = "Partial Decryption (No UUID)";
-                statusIndicator.className = "status-indicator warning";
-            } else if (decryptedPayload._partialDecryption) {
-                statusText.textContent = "Partial Decryption (UUID required)";
-                statusIndicator.className = "status-indicator warning";
-            } else if (decryptedPayload._type === "needs_uuid") {
-                statusText.textContent = "UUID Required";
-                statusIndicator.className = "status-indicator warning";
-            } else if (decryptedPayload._type === "ob_decrypted") {
-                statusText.textContent = "OB Decrypted";
-                statusIndicator.className = "status-indicator success";
-            } else {
-                statusText.textContent = "Decryption Successful";
-                statusIndicator.className = "status-indicator success";
-            }
         } catch (error) {
-            statusText.textContent = "Error";
-            statusIndicator.className = "status-indicator error";
-            errorMessage.textContent = error.message;
-            errorBanner.style.display = "flex";
-            outputPayload.value = "";
-            pcValue.textContent = "----------------";
-            digestValue.textContent = "--";
-            pcText.style.display = "none";
-            digestText.style.display = "none";
+            showError(error);
         }
     }, 300);
 }
 
-// Event Listeners
-inputPayload.addEventListener("input", processPayload);
-uuidInput.addEventListener("input", processPayload);
+// ====================================================================
+// CLIPBOARD HELPERS
+// ====================================================================
 
-// Copy button functionality
-copyBtn.addEventListener("click", async () => {
+function flashButton(button, text) {
+    const span = button.querySelector("span");
+    const originalText = span.textContent;
+    button.classList.add("success");
+    span.textContent = text;
+    setTimeout(() => {
+        button.classList.remove("success");
+        span.textContent = originalText;
+    }, 1500);
+}
+
+async function handleCopy() {
     try {
         await navigator.clipboard.writeText(outputPayload.value);
-        const copyText = copyBtn.querySelector("span");
-        const originalText = copyText.textContent;
-        copyBtn.classList.add("success");
-        copyText.textContent = "Copied!";
-        setTimeout(() => {
-            copyBtn.classList.remove("success");
-            copyText.textContent = originalText;
-        }, 1500);
+        flashButton(copyBtn, "Copied!");
     } catch (err) {
         console.error("Failed to copy:", err);
     }
-});
+}
 
-// Paste button functionality
-pasteBtn.addEventListener("click", async () => {
+async function handlePaste() {
     try {
         const text = await navigator.clipboard.readText();
         inputPayload.value = text;
         processPayload();
-        const pasteText = pasteBtn.querySelector("span");
-        const originalText = pasteText.textContent;
-        pasteBtn.classList.add("success");
-        pasteText.textContent = "Pasted!";
-        setTimeout(() => {
-            pasteBtn.classList.remove("success");
-            pasteText.textContent = originalText;
-        }, 1500);
+        flashButton(pasteBtn, "Pasted!");
     } catch (err) {
         console.error("Failed to paste:", err);
     }
-});
+}
+
+// ====================================================================
+// EVENT LISTENERS
+// ====================================================================
+
+inputPayload.addEventListener("input", processPayload);
+uuidInput.addEventListener("input", processPayload);
+copyBtn.addEventListener("click", handleCopy);
+pasteBtn.addEventListener("click", handlePaste);
 
 statusText.textContent = "Ready";

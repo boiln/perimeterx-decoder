@@ -94,23 +94,23 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
     } catch (atobError) {
         decodeFailed = true;
 
-        if (allowPartial) {
-            const bytes = [];
-            for (let i = 0; i < base64Str.length; i += 4) {
-                const chunk = base64Str.substring(i, Math.min(i + 4, base64Str.length));
-                try {
-                    const decoded = atob(chunk.padEnd(4, "="));
-                    for (let j = 0; j < decoded.length; j++) {
-                        bytes.push(decoded.charCodeAt(j));
-                    }
-                } catch (e) {
-                    // Skip this chunk
-                }
-            }
-            buf = new Uint8Array(bytes);
-        } else {
+        if (!allowPartial) {
             throw atobError;
         }
+
+        const bytes = [];
+        for (let i = 0; i < base64Str.length; i += 4) {
+            const chunk = base64Str.substring(i, Math.min(i + 4, base64Str.length));
+            try {
+                const decoded = atob(chunk.padEnd(4, "="));
+                for (let j = 0; j < decoded.length; j++) {
+                    bytes.push(decoded.charCodeAt(j));
+                }
+            } catch (e) {
+                // Skip this chunk
+            }
+        }
+        buf = new Uint8Array(bytes);
     }
 
     const latin1 = Array.from(buf)
@@ -145,17 +145,17 @@ export function decrypt(encrypted, uuid, allowPartial = false) {
         jsonStr += String.fromCharCode(xoredJson.charCodeAt(i) ^ 50);
     }
 
-    if (allowPartial) {
-        try {
-            return JSON.parse(jsonStr);
-        } catch (e) {
-            return {
-                _rawDecrypted: jsonStr,
-                _parseError: e.message,
-                _note: "Partial decryption - wrong UUID produces malformed output",
-            };
-        }
+    if (!allowPartial) {
+        return JSON.parse(jsonStr);
     }
 
-    return JSON.parse(jsonStr);
+    try {
+        return JSON.parse(jsonStr);
+    } catch (e) {
+        return {
+            _rawDecrypted: jsonStr,
+            _parseError: e.message,
+            _note: "Partial decryption - wrong UUID produces malformed output",
+        };
+    }
 }
