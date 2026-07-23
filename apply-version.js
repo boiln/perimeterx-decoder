@@ -6,7 +6,6 @@ const path = require("path");
 
 try {
     const commitHash = execSync("git rev-parse --short HEAD").toString().trim();
-
     const indexPath = path.join(__dirname, "index.html");
     let html = fs.readFileSync(indexPath, "utf8");
 

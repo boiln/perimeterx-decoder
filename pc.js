@@ -40,9 +40,11 @@ function customJsonStringify(payload) {
 
     function W(t) {
         const e = G[t];
+
         if (e) {
             return e;
         }
+
         return "\\u" + ("0000" + t.charCodeAt(0).toString(16)).slice(-4);
     }
 
@@ -51,24 +53,27 @@ function customJsonStringify(payload) {
 
     function L(t) {
         F.lastIndex = 0;
+
         return '"' + (F.test(t) ? t.replace(F, W) : t) + '"';
     }
 
     function j(e) {
         switch (t(e)) {
-            case "undefined":
-                return "null";
-            case "boolean":
-                return String(e);
-            case "number":
-                const r = String(e);
-                return "NaN" === r || "Infinity" === r ? "null" : r;
-            case "string":
-                return L(e);
+        case "undefined":
+            return "null";
+        case "boolean":
+            return String(e);
+        case "number":
+            const r = String(e);
+            return "NaN" === r || "Infinity" === r ? "null" : r;
+        case "string":
+            return L(e);
         }
+
         if (null === e || e instanceof RegExp) {
             return "null";
         }
+
         if (e instanceof Date) {
             return [
                 '"',
@@ -88,21 +93,29 @@ function customJsonStringify(payload) {
                 '"',
             ].join("");
         }
+
         if (e instanceof Array) {
             const n = ["["];
+
             for (let a = 0; a < e.length; a++) {
                 n.push(j(e[a]) || '"undefined"', ",");
             }
+
             n[n.length > 1 ? n.length - 1 : n.length] = "]";
+
             return n.join("");
         }
+
         const n = ["{"];
+
         for (const o in e) {
             if (e.hasOwnProperty(o) && undefined !== e[o]) {
                 n.push(L(o), ":", j(e[o]) || '"undefined"', ",");
             }
         }
+
         n[n.length > 1 ? n.length - 1 : n.length] = "}";
+
         return n.join("");
     }
 
@@ -112,9 +125,10 @@ function customJsonStringify(payload) {
 function md5Hmac(message, key) {
     function md5cycle(x, k) {
         let a = x[0],
-            b = x[1],
-            c = x[2],
-            d = x[3];
+        b = x[1],
+        c = x[2],
+        d = x[3];
+
         a = ff(a, b, c, d, k[0], 7, -680876936);
         d = ff(d, a, b, c, k[1], 12, -389564586);
         c = ff(c, d, a, b, k[2], 17, 606105819);
@@ -187,7 +201,8 @@ function md5Hmac(message, key) {
 
     function cmn(q, a, b, x, s, t) {
         a = add32(add32(a, q), add32(x, t));
-        return add32((a << s) | (a >>> (32 - s)), b);
+
+        return add32((a << s) | (a >>>(32 - s)), b);
     }
 
     function ff(a, b, c, d, x, s, t) {
@@ -210,43 +225,57 @@ function md5Hmac(message, key) {
         const n = s.length;
         const state = [1732584193, -271733879, -1732584194, 271733878];
         let i;
+
         for (i = 64; i <= s.length; i += 64) {
             md5cycle(state, md5blk(s.substring(i - 64, i)));
         }
+
         s = s.substring(i - 64);
-        const tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        const tail = [
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+        ];
+
         for (i = 0; i < s.length; i++) {
-            tail[i >> 2] |= s.charCodeAt(i) << (i % 4 << 3);
+            tail[i >> 2] |= s.charCodeAt(i) <<((i % 4) << 3);
         }
-        tail[i >> 2] |= 0x80 << (i % 4 << 3);
+
+        tail[i >> 2] |= 0x80 <<((i % 4) << 3);
+
         if (i > 55) {
             md5cycle(state, tail);
             for (i = 0; i < 16; i++) tail[i] = 0;
         }
+
         tail[14] = n * 8;
         md5cycle(state, tail);
+
         return state;
     }
 
     function md5blk(s) {
         const md5blks = [];
+
         for (let i = 0; i < 64; i += 4) {
             md5blks[i >> 2] =
                 s.charCodeAt(i) +
-                (s.charCodeAt(i + 1) << 8) +
-                (s.charCodeAt(i + 2) << 16) +
-                (s.charCodeAt(i + 3) << 24);
+            (s.charCodeAt(i + 1) << 8) +
+            (s.charCodeAt(i + 2) << 16) +
+            (s.charCodeAt(i + 3) << 24);
         }
+
         return md5blks;
     }
 
     function rhex(n) {
         let s = "";
+
         for (let j = 0; j < 4; j++) {
-            const highNibble = ((n >> (j * 8 + 4)) & 0x0f).toString(16);
-            const lowNibble = ((n >> (j * 8)) & 0x0f).toString(16);
+            const highNibble = ((n >>(j * 8 + 4)) & 0x0f).toString(16);
+            const lowNibble = ((n >>(j * 8)) & 0x0f).toString(16);
+
             s += highNibble + lowNibble;
         }
+
         return s;
     }
 
@@ -254,6 +283,7 @@ function md5Hmac(message, key) {
         for (let i = 0; i < x.length; i++) {
             x[i] = rhex(x[i]);
         }
+
         return x.join("");
     }
 
@@ -263,16 +293,19 @@ function md5Hmac(message, key) {
 
     const blockSize = 64;
     let keyBytes = [];
+
     for (let i = 0; i < key.length; i++) {
         keyBytes.push(key.charCodeAt(i));
     }
 
     if (keyBytes.length > blockSize) {
         const hash = md51(key);
+
         keyBytes = [];
+
         for (let i = 0; i < hash.length; i++) {
             for (let j = 0; j < 4; j++) {
-                keyBytes.push((hash[i] >> (j * 8)) & 0xff);
+                keyBytes.push((hash[i] >>(j * 8)) & 0xff);
             }
         }
     }
@@ -283,18 +316,18 @@ function md5Hmac(message, key) {
 
     const oKeyPad = keyBytes.map((b) => b ^ 0x5c);
     const iKeyPad = keyBytes.map((b) => b ^ 0x36);
-
-    const innerStr = String.fromCharCode(...iKeyPad) + message;
+    const innerStr = String.fromCharCode(... iKeyPad) + message;
     const innerHash = md51(innerStr);
-
     let innerHashBytes = [];
+
     for (let i = 0; i < innerHash.length; i++) {
         for (let j = 0; j < 4; j++) {
-            innerHashBytes.push((innerHash[i] >> (j * 8)) & 0xff);
+            innerHashBytes.push((innerHash[i] >>(j * 8)) & 0xff);
         }
     }
 
-    const outerStr = String.fromCharCode(...oKeyPad) + String.fromCharCode(...innerHashBytes);
+    const outerStr =
+        String.fromCharCode(... oKeyPad) + String.fromCharCode(... innerHashBytes);
     const outerHash = md51(outerStr);
 
     return hex(outerHash);
@@ -313,8 +346,8 @@ function derivePcFromDigest(hex32) {
     }
 
     const combo = digits + mapped;
-
     let pc = "";
+
     for (let i = 0; i < 32; i += 2) {
         pc += combo[i];
     }
@@ -329,16 +362,20 @@ export async function recomputePc(payload, uuid, tag, ft) {
     console.log("FT:", ft);
 
     const serialized = customJsonStringify(payload);
+
     console.log("Serialized length:", serialized.length);
     console.log("Serialized (first 200 chars):", serialized.substring(0, 200));
 
     const key = `${uuid}:${tag}:${ft}`;
+
     console.log("HMAC Key:", key);
 
     const digest = md5Hmac(serialized, key);
+
     console.log("MD5-HMAC Digest:", digest);
 
     const pc = derivePcFromDigest(digest);
+
     console.log("Derived PC:", pc);
     console.log("=== PC Computation Complete ===\n");
 
